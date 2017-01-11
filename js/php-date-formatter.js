@@ -70,6 +70,8 @@ var DateFormatter;
             }
         },
         separators: /[ \-+\/\.T:@]/g,
+        ordinalSuffixSeparator: /\d{1,2}(th|st|nd|rd)$/,
+        onlyDate: /\d{1,2}$/,
         validParts: /[dDjlNSwzWFmMntLoYyaABgGhHisueTIOPZcrU]/g,
         intParts: /[djwNzmnyYhHgGis]/g,
         tzParts: /\b(?:[PMCEA][SDP]T|(?:Pacific|Mountain|Central|Eastern|Atlantic) (?:Standard|Daylight|Prevailing) Time|(?:GMT|UTC)(?:[-+]\d{4})?)\b/g,
@@ -80,6 +82,8 @@ var DateFormatter;
         var self = this, config = _extend(defaultSettings, options);
         self.dateSettings = config.dateSettings;
         self.separators = config.separators;
+        self.ordinalSuffixSeparator = config.ordinalSuffixSeparator;
+        self.onlyDate = config.onlyDate;
         self.validParts = config.validParts;
         self.intParts = config.intParts;
         self.tzParts = config.tzParts;
@@ -88,13 +92,22 @@ var DateFormatter;
 
     DateFormatter.prototype = {
         constructor: DateFormatter,
-        getMonth: function (val) {
+        getMonth: function (val, caseArg) {
             var self = this, i;
-            i = _indexOf(val, self.dateSettings.monthsShort) + 1;
-            if (i === 0) {
+            if (caseArg === 'M') {
+                i = _indexOf(val, self.dateSettings.monthsShort) + 1;
+            } else if (caseArg === 'F') {
                 i = _indexOf(val, self.dateSettings.months) + 1;
             }
             return i;
+        },
+        checkOrdinalSuffix: function (val) {
+            var self = this;
+            return self.ordinalSuffixSeparator.test(val);
+        },
+        checkOnlyDate: function (val) {
+            var self = this;
+            return self.onlyDate.test(val);
         },
         parseDate: function (vDate, vFormat) {
             var self = this, vFormatParts, vDateParts, i, vDateFlag = false, vTimeFlag = false, vDatePart, iDatePart,
@@ -122,6 +135,13 @@ var DateFormatter;
             if (!vFormatParts || vFormatParts.length === 0) {
                 throw new Error("Invalid date format definition.");
             }
+            //Remove d,F is S is present
+            var index = vFormatParts.indexOf('S');
+            var indexD = vFormatParts.indexOf('d');
+            var indexJ = vFormatParts.indexOf('j');
+            if (index > -1 && (indexD == (index - 1) || indexJ == (index - 1))) {
+                    vFormatParts.splice(index - 1, 1);
+            }
             vDateParts = vDate.replace(self.separators, '\0').split('\0');
             for (i = 0; i < vDateParts.length; i++) {
                 vDatePart = vDateParts[i];
@@ -137,29 +157,36 @@ var DateFormatter;
                         }
                         vDateFlag = true;
                         break;
-                    case 'm':
-                    case 'n':
                     case 'M':
                     case 'F':
-                        if (isNaN(iDatePart)) {
-                            vMonth = self.getMonth(vDatePart);
-                            if (vMonth > 0) {
-                                out.month = vMonth;
-                            } else {
-                                return null;
-                            }
+                        vMonth = self.getMonth(vDatePart);
+                        if (vMonth > 0) {
+                            out.month = vMonth;
                         } else {
-                            if (iDatePart >= 1 && iDatePart <= 12) {
+                            return null;
+                        }
+                        vDateFlag = true;
+                        break;
+                    case 'm':
+                    case 'n':
+                        if (iDatePart >= 1 && iDatePart <= 12) {
                                 out.month = iDatePart;
-                            } else {
+                        } else {
                                 return null;
-                            }
+                        }
+                        vDateFlag = true;
+                        break;
+                    case 'S':
+                        if (iDatePart >= 1 && iDatePart <= 31 && self.checkOrdinalSuffix(vDatePart)) {
+                            out.day = iDatePart;
+                        } else {
+                            return null;
                         }
                         vDateFlag = true;
                         break;
                     case 'd':
                     case 'j':
-                        if (iDatePart >= 1 && iDatePart <= 31) {
+                        if (iDatePart >= 1 && iDatePart <= 31 && self.checkOnlyDate(vDatePart)) {
                             out.day = iDatePart;
                         } else {
                             return null;
@@ -218,7 +245,19 @@ var DateFormatter;
                 }
             }
             if (vDateFlag === true && out.year && out.month && out.day) {
-                out.date = new Date(out.year, out.month - 1, out.day, out.hour, out.min, out.sec, 0);
+                var index = -1 ;
+                if(out.day == 31){
+                    index = [1,3,5,7,8,10,12].indexOf(out.month);
+                } else if(out.day == 30){
+                    index = [1,3,4,5,6,7,8,9,10,11,12].indexOf(out.month);
+                } else if(out.day == 29){
+                    const leapYear = new RegExp('^((?:[1-9]\\d(?:0[48]|[2468][048]|[13579][26])|(?:[2468][048]|[13579][26])00))$');
+                    index = leapYear.test(out.year) ? 0 : -1;
+                } else {
+                    index = 0;
+                }
+                out.date = (index > -1) ? new Date(out.year, out.month - 1, out.day, out.hour, out.min, out.sec, 0) : null;
+
             } else {
                 if (vTimeFlag !== true) {
                     return null;
